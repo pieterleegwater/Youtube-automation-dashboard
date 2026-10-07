@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASMR Shorts Dashboard</title>
+<script src="/static/chart.umd.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2; --surface-1: #fcfcfb; --border: #e3e2de;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+  --series-1: #2a78d6; --grid: #ecebe7;
+  --good: #008300; --critical: #e34948; --warning: #b57a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2c;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --series-1: #3987e5; --grid: #262624;
+    --good: #3fae3f; --critical: #e66767; --warning: #c98500;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+.sub { color: var(--text-secondary); margin: 0 0 20px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.grid { display: grid; gap: 16px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.kpi .label { color: var(--text-secondary); font-size: 12px; }
+.kpi .value { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kpi .hint { color: var(--text-muted); font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+button.primary { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.status { display: inline-flex; align-items: center; gap: 6px; margin-right: 12px; color: var(--text-secondary); }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ok { background: var(--good); } .bad { background: var(--critical); }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 500; font-size: 12px; white-space: nowrap; }
+td.num, th.num { text-align: right; }
+.muted { color: var(--text-muted); }
+.pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.pill.uploaded { color: var(--good); } .pill.failed { color: var(--critical); }
+.pill.generating, .pill.uploading { color: var(--warning); }
+.chart-box { position: relative; height: 240px; }
+.log { font-family: ui-monospace, monospace; font-size: 12px; max-height: 280px; overflow-y: auto; }
+.log div { padding: 2px 0; }
+.log .error { color: var(--critical); } .log .warning { color: var(--warning); }
+form.new-strategy { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+input, textarea { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-0); color: var(--text-primary); width: 100%; }
+textarea { grid-column: 1 / -1; min-height: 60px; }
+details summary { cursor: pointer; color: var(--text-secondary); }
+a { color: var(--series-1); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ASMR Shorts Dashboard</h1>
+  <p class="sub">Elke dag automatisch een video maken met Gemini, uploaden om 16:00 en de strategie bijsturen op basis van hoe lang mensen blijven kijken.</p>
+
+  <section class="card actions">
+    <span class="status"><span class="dot {{ 'ok' if gemini_configured else 'bad' }}"></span>Gemini {{ 'ingesteld' if gemini_configured else 'geen API-key' }}</span>
+    <span class="status"><span class="dot {{ 'ok' if youtube_connected else 'bad' }}"></span>YouTube {{ 'verbonden' if youtube_connected else 'niet verbonden' }}</span>
+    <span style="flex:1"></span>
+    <form method="post" action="/actions/generate"><button class="primary">Nu video genereren</button></form>
+    <form method="post" action="/actions/upload"><button>Nu uploaden</button></form>
+    <form method="post" action="/actions/stats"><button>Statistieken ophalen</button></form>
+    <form method="post" action="/actions/evolve"><button>Strategie bijsturen</button></form>
+  </section>
+
+  <section class="grid kpis">
+    <div class="card kpi"><div class="label">Uploads</div><div class="value">{{ kpis.uploads }}</div></div>
+    <div class="card kpi"><div class="label">Totaal weergaven</div><div class="value">{{ "{:,}".format(kpis.views).replace(",", ".") }}</div></div>
+    <div class="card kpi"><div class="label">Bleef kijken (gem.)</div>
+      <div class="value">{{ "%.0f%%"|format(kpis.stayed * 100) if kpis.stayed is not none else "–" }}</div>
+      <div class="hint">rest swipete weg</div></div>
+    <div class="card kpi"><div class="label">Beste strategie</div>
+      <div class="value" style="font-size:18px">{{ kpis.best.name if kpis.best else "–" }}</div>
+      <div class="hint">{{ "score %.2f"|format(kpis.best.score) if kpis.best else "nog te weinig data" }}</div></div>
+  </section>
+
+  <section class="grid two">
+    <div class="card"><h2>Weergaven per video</h2><div class="chart-box"><canvas id="viewsChart" aria-label="Weergaven per video"></canvas></div></div>
+    <div class="card"><h2>Bleef kijken per video (%)</h2><div class="chart-box"><canvas id="stayedChart" aria-label="Percentage kijkers dat bleef kijken per video"></canvas></div></div>
+  </section>
+
+  <section class="card" id="strategieen">
+    <h2>Strategieën</h2>
+    <p class="muted" style="margin-top:-6px">Het systeem kiest elke dag een strategie: goed scorende vaker, nieuwe ook af en toe. Elke week worden zwakke strategieën uitgezet en stelt Gemini een nieuwe voor.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Strategie</th><th class="num">Video's</th><th class="num">Gem. weergaven</th><th class="num">Bleef kijken</th><th class="num">Gem. bekeken</th><th class="num">Score</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for s in strategies %}
+        <tr class="{{ '' if s.active else 'muted' }}">
+          <td><strong>{{ s.name }}</strong><br><span class="muted">{{ s.theme }}</span>
+            {% if s.notes %}<br><span class="muted" style="font-size:12px">{{ s.notes }}</span>{% endif %}</td>
+          <td class="num">{{ s.videos }}</td>
+          <td class="num">{{ s.avg_views }}</td>
+          <td class="num">{{ "%.0f%%"|format(s.stayed * 100) if s.stayed is not none else "–" }}</td>
+          <td class="num">{{ "%.0f%%"|format(s.avg_pct) if s.avg_pct is not none else "–" }}</td>
+          <td class="num">{{ "%.2f"|format(s.score) if s.score is not none else "–" }}{% if s.pending %}<br><span class="muted" style="font-size:12px">+{{ s.pending }} wachtend</span>{% endif %}</td>
+          <td>{{ "actief" if s.active else "uit" }}</td>
+          <td><form method="post" action="/strategies/{{ s.id }}/toggle"><button>{{ "Uitzetten" if s.active else "Aanzetten" }}</button></form></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    <details style="margin-top:12px"><summary>Strategie toevoegen</summary>
+      <form class="new-strategy" method="post" action="/strategies" style="margin-top:10px">
+        <input name="name" placeholder="Naam" required>
+        <input name="theme" placeholder="Thema (Engels), bijv. slime pressing" required>
+        <input name="title_style" placeholder="Titelstijl">
+        <input name="hashtags" placeholder="#asmr #satisfying #shorts">
+        <textarea name="prompt_template" placeholder="Videoprompt (Engels). Placeholders zoals {color} worden door Gemini ingevuld." required></textarea>
+        <div><button class="primary">Opslaan</button></div>
+      </form>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>Video's</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>Titel</th><th>Strategie</th><th>Status</th><th class="num">Weergaven</th><th class="num">Bleef kijken</th><th class="num">Gem. bekeken</th><th class="num">Score</th></tr></thead>
+      <tbody>
+      {% for v in videos %}
+        <tr>
+          <td class="muted">{{ v.id }}</td>
+          <td>{% if v.youtube_id %}<a href="https://youtube.com/shorts/{{ v.youtube_id }}" target="_blank" rel="noopener">{{ v.title or "(zonder titel)" }}</a>
+              {% elif v.file_path %}<a href="/media/{{ v.id }}" target="_blank">{{ v.title or "(zonder titel)" }}</a>
+              {% else %}{{ v.title or "(bezig…)" }}{% endif %}
+              {% if v.error %}<br><span class="muted" style="font-size:12px">{{ v.error[:160] }}</span>{% endif %}</td>
+          <td>{{ v.strategy }}</td>
+          <td><span class="pill {{ v.status }}">{{ v.status }}</span></td>
+          <td class="num">{{ v.views if v.status == "uploaded" else "–" }}</td>
+          <td class="num">{{ "%.0f%%"|format(v.stayed * 100) if v.stayed is not none else "–" }}</td>
+          <td class="num">{{ "%.0f%%"|format(v.avg_pct) if v.avg_pct is not none else "–" }}</td>
+          <td class="num">{{ "%.2f"|format(v.score) if v.score is not none else "–" }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="muted">Nog geen video's. Klik op "Nu video genereren" of wacht op de planner.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="grid two">
+    <div class="card"><h2>Planning</h2>
+      {% if jobs %}<table><tbody>
+        {% for j in jobs %}<tr><td>{{ j.name }}</td><td class="num">{{ j.next.strftime("%a %d-%m %H:%M") if j.next else "–" }}</td></tr>{% endfor %}
+      </tbody></table>{% else %}<p class="muted">Planner staat uit (DISABLE_SCHEDULER=1).</p>{% endif %}
+    </div>
+    <div class="card"><h2>Activiteit</h2>
+      <div class="log">{% for l in logs %}<div class="{{ l.level }}">{{ l.ts[5:16].replace("T", " ") }} UTC — {{ l.message }}</div>{% else %}<div class="muted">Nog geen activiteit.</div>{% endfor %}</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const data = {{ chart | tojson }};
+const css = getComputedStyle(document.documentElement);
+const v = name => css.getPropertyValue(name).trim();
+function barChart(id, values, fmt) {
+  new Chart(document.getElementById(id), {
+    type: "bar",
+    data: { labels: data.map(d => d.label), datasets: [{ data: values, backgroundColor: v("--series-1"),
+      borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: "bottom", maxBarThickness: 28 }] },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: ctx => fmt(ctx.parsed.y) } } },
+      scales: {
+        x: { ticks: { display: false }, grid: { display: false }, border: { color: v("--border") } },
+        y: { beginAtZero: true, ticks: { color: v("--text-secondary"), callback: fmt },
+             grid: { color: v("--grid") }, border: { display: false } },
+      },
+    },
+  });
+}
+if (window.Chart && data.length) {
+  barChart("viewsChart", data.map(d => d.views), n => Number(n).toLocaleString("nl-NL"));
+  barChart("stayedChart", data.map(d => d.stayed == null ? null : Math.round(d.stayed * 100)), n => n + "%");
+}
+</script>
+</body>
+</html>
