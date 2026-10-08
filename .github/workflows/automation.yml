@@ -1,0 +1,110 @@
+name: ASMR automatisering
+
+on:
+  schedule:
+    - cron: "7 10 * * *"    # dagelijks: video genereren + inplannen voor 16:00 (12:07 zomertijd / 11:07 wintertijd)
+    - cron: "7 12 * * *"    # dagelijks: tweede poging als de eerste mislukte (doet niets als het al gelukt is)
+    - cron: "37 */6 * * *"  # elke 6 uur: statistieken ophalen
+    - cron: "17 6 * * 1"    # maandag: strategieën bijsturen
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Wat wil je doen?
+        type: choice
+        default: daily
+        options: [daily, generate, upload, stats, evolve, render, toggle-strategy, add-strategy]
+      strategy_id:
+        description: "Strategie-id (bij toggle-strategy)"
+        required: false
+      name:
+        description: "Naam (bij add-strategy)"
+        required: false
+      theme:
+        description: "Thema in het Engels (bij add-strategy)"
+        required: false
+      prompt:
+        description: "Videoprompt in het Engels (bij add-strategy)"
+        required: false
+      hashtags:
+        description: "Hashtags (bij add-strategy)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: asmr-state
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
+      VEO_MODEL: ${{ vars.VEO_MODEL || 'veo-3.1-generate-preview' }}
+      TEXT_MODEL: ${{ vars.TEXT_MODEL || 'gemini-2.5-flash' }}
+      UPLOAD_TIME: ${{ vars.UPLOAD_TIME || '16:00' }}
+      TIMEZONE: Europe/Amsterdam
+      SCHEDULE_PUBLISH: "1"
+      DATA_DIR: state
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Opgeslagen data ophalen (branch "state")
+        run: |
+          git config user.name "asmr-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin state >/dev/null; then
+            git fetch --depth=1 origin state
+            git worktree add --detach state FETCH_HEAD
+          else
+            git worktree add --detach state
+            cd state && git checkout --orphan state-init && git rm -rfq . && cd ..
+          fi
+          printf 'videos/\n' > state/.gitignore
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Taak uitvoeren
+        env:
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          INPUT_ACTION: ${{ inputs.action }}
+          INPUT_STRATEGY_ID: ${{ inputs.strategy_id }}
+          INPUT_NAME: ${{ inputs.name }}
+          INPUT_THEME: ${{ inputs.theme }}
+          INPUT_PROMPT: ${{ inputs.prompt }}
+          INPUT_HASHTAGS: ${{ inputs.hashtags }}
+        run: |
+          case "$EVENT_SCHEDULE" in
+            "37 */6 * * *") action=stats ;;
+            "17 6 * * 1")   action=evolve ;;
+            "")             action="$INPUT_ACTION" ;;
+            *)              action=daily ;;
+          esac
+          echo "Taak: $action"
+          case "$action" in
+            toggle-strategy) python -m app.cli toggle-strategy "$INPUT_STRATEGY_ID" ;;
+            add-strategy)    python -m app.cli add-strategy "$INPUT_NAME" "$INPUT_THEME" "$INPUT_PROMPT" "${INPUT_HASHTAGS:-#asmr #satisfying #shorts}" ;;
+            render)          ;;
+            *)               python -m app.cli "$action" ;;
+          esac
+
+      - name: Dashboard bijwerken
+        if: always()
+        run: python -m app.cli render state
+
+      - name: Data opslaan
+        if: always()
+        run: |
+          cd state
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -qm "Dashboard-update $(date -u +%F' '%H:%M)"
+          git push origin HEAD:refs/heads/state
