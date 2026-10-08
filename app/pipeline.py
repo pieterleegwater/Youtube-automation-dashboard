@@ -3,6 +3,7 @@
 import json
 import threading
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import gemini_client, youtube_client
@@ -133,6 +134,18 @@ def generate_today(force: bool = False) -> int | None:
             return None
 
 
+def _scheduled_publish_time() -> datetime | None:
+    """Bij SCHEDULE_PUBLISH: vandaag om UPLOAD_TIME (lokale tijd), als dat nog in de toekomst ligt."""
+    if not settings.schedule_publish:
+        return None
+    hour, minute = settings.upload_time
+    tz = ZoneInfo(settings.timezone)
+    target = datetime.now(tz).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target - datetime.now(tz) < timedelta(minutes=15):
+        return None
+    return target.astimezone(timezone.utc)
+
+
 def upload_today() -> str | None:
     """Upload de oudste klaarstaande video. Genereert eerst een video als er geen klaarstaat."""
     with connect() as conn:
@@ -141,6 +154,10 @@ def upload_today() -> str | None:
                 log("Vandaag is al een video geüpload, upload overgeslagen")
                 return None
         ready = conn.execute("SELECT * FROM videos WHERE status = 'ready' ORDER BY id LIMIT 1").fetchone()
+        if ready is not None and not Path(ready["file_path"] or "").exists():
+            # Bijv. op GitHub Actions: het bestand van een eerdere run bestaat niet meer.
+            conn.execute("UPDATE videos SET status = 'failed', error = 'videobestand ontbreekt' WHERE id = ?", (ready["id"],))
+            ready = None
     if ready is None:
         log("Geen video klaar om te uploaden, nu genereren", "warning")
         if generate_today(force=True) is None:
@@ -156,18 +173,22 @@ def upload_today() -> str | None:
             description = ready["description"]
             if strategy and strategy["hashtags"] and strategy["hashtags"] not in description:
                 description = f"{description}\n\n{strategy['hashtags']}".strip()
+            publish_at = _scheduled_publish_time()
             youtube_id = youtube_client.upload_video(
                 path=ready["file_path"],
                 title=ready["title"],
                 description=description,
                 tags=json.loads(ready["tags"] or "[]"),
+                publish_at=publish_at,
             )
+            published_at = publish_at.isoformat(timespec="seconds") if publish_at else now_iso()
             with connect() as conn:
                 conn.execute(
                     "UPDATE videos SET status = 'uploaded', youtube_id = ?, published_at = ? WHERE id = ?",
-                    (youtube_id, now_iso(), ready["id"]),
+                    (youtube_id, published_at, ready["id"]),
                 )
-            log(f"Video #{ready['id']} geüpload: https://youtube.com/shorts/{youtube_id}")
+            when = f", gaat live om {publish_at.astimezone(ZoneInfo(settings.timezone)):%H:%M}" if publish_at else ""
+            log(f"Video #{ready['id']} geüpload{when}: https://youtube.com/shorts/{youtube_id}")
             return youtube_id
         except Exception as exc:
             with connect() as conn:

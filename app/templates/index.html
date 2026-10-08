@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ASMR Shorts Dashboard</title>
-<script src="/static/chart.umd.js"></script>
+<script src="{{ static_prefix | default('/static/') }}chart.umd.js"></script>
 <style>
 :root {
   color-scheme: light;
@@ -73,10 +73,15 @@ a { color: var(--series-1); }
     <span class="status"><span class="dot {{ 'ok' if gemini_configured else 'bad' }}"></span>Gemini {{ 'ingesteld' if gemini_configured else 'geen API-key' }}</span>
     <span class="status"><span class="dot {{ 'ok' if youtube_connected else 'bad' }}"></span>YouTube {{ 'verbonden' if youtube_connected else 'niet verbonden' }}</span>
     <span style="flex:1"></span>
+    {% if static_mode %}
+    <span class="muted">Bijgewerkt {{ updated_at }}</span>
+    <a href="{{ actions_url }}">Handmatig starten via GitHub Actions →</a>
+    {% else %}
     <form method="post" action="/actions/generate"><button class="primary">Nu video genereren</button></form>
     <form method="post" action="/actions/upload"><button>Nu uploaden</button></form>
     <form method="post" action="/actions/stats"><button>Statistieken ophalen</button></form>
     <form method="post" action="/actions/evolve"><button>Strategie bijsturen</button></form>
+    {% endif %}
   </section>
 
   <section class="grid kpis">
@@ -111,11 +116,12 @@ a { color: var(--series-1); }
           <td class="num">{{ "%.0f%%"|format(s.avg_pct) if s.avg_pct is not none else "–" }}</td>
           <td class="num">{{ "%.2f"|format(s.score) if s.score is not none else "–" }}{% if s.pending %}<br><span class="muted" style="font-size:12px">+{{ s.pending }} wachtend</span>{% endif %}</td>
           <td>{{ "actief" if s.active else "uit" }}</td>
-          <td><form method="post" action="/strategies/{{ s.id }}/toggle"><button>{{ "Uitzetten" if s.active else "Aanzetten" }}</button></form></td>
+          <td>{% if static_mode %}<span class="muted">#{{ s.id }}</span>{% else %}<form method="post" action="/strategies/{{ s.id }}/toggle"><button>{{ "Uitzetten" if s.active else "Aanzetten" }}</button></form>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table></div>
+    {% if not static_mode %}
     <details style="margin-top:12px"><summary>Strategie toevoegen</summary>
       <form class="new-strategy" method="post" action="/strategies" style="margin-top:10px">
         <input name="name" placeholder="Naam" required>
@@ -126,6 +132,7 @@ a { color: var(--series-1); }
         <div><button class="primary">Opslaan</button></div>
       </form>
     </details>
+    {% endif %}
   </section>
 
   <section class="card">
@@ -137,7 +144,7 @@ a { color: var(--series-1); }
         <tr>
           <td class="muted">{{ v.id }}</td>
           <td>{% if v.youtube_id %}<a href="https://youtube.com/shorts/{{ v.youtube_id }}" target="_blank" rel="noopener">{{ v.title or "(zonder titel)" }}</a>
-              {% elif v.file_path %}<a href="/media/{{ v.id }}" target="_blank">{{ v.title or "(zonder titel)" }}</a>
+              {% elif v.file_path and not static_mode %}<a href="/media/{{ v.id }}" target="_blank">{{ v.title or "(zonder titel)" }}</a>
               {% else %}{{ v.title or "(bezig…)" }}{% endif %}
               {% if v.error %}<br><span class="muted" style="font-size:12px">{{ v.error[:160] }}</span>{% endif %}</td>
           <td>{{ v.strategy }}</td>
@@ -158,6 +165,8 @@ a { color: var(--series-1); }
     <div class="card"><h2>Planning</h2>
       {% if jobs %}<table><tbody>
         {% for j in jobs %}<tr><td>{{ j.name }}</td><td class="num">{{ j.next.strftime("%a %d-%m %H:%M") if j.next else "–" }}</td></tr>{% endfor %}
+      </tbody></table>{% elif static_mode %}<table><tbody>
+        {% for name, when in schedule %}<tr><td>{{ name }}</td><td class="num">{{ when }}</td></tr>{% endfor %}
       </tbody></table>{% else %}<p class="muted">Planner staat uit (DISABLE_SCHEDULER=1).</p>{% endif %}
     </div>
     <div class="card"><h2>Activiteit</h2>

@@ -7,9 +7,10 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import pipeline, youtube_client
+from . import pipeline
+from .dashboard import dashboard_context
 from .config import settings
-from .db import connect, init_db, insert_strategy, latest_stats_by_video, log
+from .db import connect, init_db, insert_strategy, log
 from .scheduler import JOB_NAMES, create_scheduler
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -40,45 +41,11 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 
 @app.get("/")
 def dashboard(request: Request):
-    with connect() as conn:
-        latest = latest_stats_by_video(conn)
-        names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM strategies")}
-        videos = []
-        for v in conn.execute("SELECT * FROM videos ORDER BY id DESC LIMIT 60"):
-            videos.append({**dict(v), "strategy": names.get(v["strategy_id"], "?"), **pipeline.video_metrics(latest.get(v["id"]))})
-        strategies = pipeline.strategy_overview(conn)
-        logs = conn.execute("SELECT * FROM logs ORDER BY id DESC LIMIT 30").fetchall()
-
-    uploaded = [v for v in videos if v["status"] == "uploaded"]
-    stayed = [v["stayed"] for v in uploaded if v["stayed"] is not None]
-    kpis = {
-        "uploads": len(uploaded),
-        "views": sum(v["views"] for v in uploaded),
-        "stayed": sum(stayed) / len(stayed) if stayed else None,
-        "best": max((s for s in strategies if s["score"] is not None), key=lambda s: s["score"], default=None),
-    }
-    chart = [
-        {"label": v["title"][:40] or f"#{v['id']}", "views": v["views"], "stayed": v["stayed"]}
-        for v in reversed(uploaded[:30])
-    ]
-    jobs = []
+    context = dashboard_context()
     if scheduler.running:
         for job in scheduler.get_jobs():
-            jobs.append({"name": JOB_NAMES.get(job.id, job.id), "next": job.next_run_time})
-    return templates.TemplateResponse(
-        request,
-        "index.html",
-        {
-            "videos": videos,
-            "strategies": strategies,
-            "logs": logs,
-            "kpis": kpis,
-            "chart": chart,
-            "jobs": jobs,
-            "youtube_connected": youtube_client.is_connected(),
-            "gemini_configured": bool(settings.gemini_api_key),
-        },
-    )
+            context["jobs"].append({"name": JOB_NAMES.get(job.id, job.id), "next": job.next_run_time})
+    return templates.TemplateResponse(request, "index.html", context)
 
 
 @app.post("/actions/{name}")

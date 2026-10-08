@@ -1,4 +1,5 @@
-from datetime import date
+import os
+from datetime import date, datetime
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -29,6 +30,8 @@ ANALYTICS_METRICS = [
 
 def get_credentials() -> Credentials:
     token = Path(settings.youtube_token_file)
+    if not token.exists() and os.getenv("YOUTUBE_TOKEN_JSON"):
+        token.write_text(os.environ["YOUTUBE_TOKEN_JSON"])
     if not token.exists():
         raise RuntimeError("Nog niet ingelogd bij YouTube: draai `python -m scripts.youtube_auth`")
     creds = Credentials.from_authorized_user_file(str(token), SCOPES)
@@ -49,7 +52,7 @@ def is_connected() -> bool:
         return False
 
 
-def upload_video(path: Path, title: str, description: str, tags: list[str]) -> str:
+def upload_video(path: Path, title: str, description: str, tags: list[str], publish_at: datetime | None = None) -> str:
     youtube = build("youtube", "v3", credentials=get_credentials(), cache_discovery=False)
     body = {
         "snippet": {
@@ -65,6 +68,9 @@ def upload_video(path: Path, title: str, description: str, tags: list[str]) -> s
             "containsSyntheticMedia": True,
         },
     }
+    if publish_at is not None:
+        body["status"]["privacyStatus"] = "private"
+        body["status"]["publishAt"] = publish_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     media = MediaFileUpload(str(path), mimetype="video/mp4", chunksize=8 * 1024 * 1024, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None

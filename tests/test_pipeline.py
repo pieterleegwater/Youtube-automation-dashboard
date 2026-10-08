@@ -57,3 +57,21 @@ def test_full_cycle(env):
 def test_upload_generates_when_nothing_ready(env):
     pipeline, _ = env
     assert pipeline.upload_today() == "yt0"
+
+
+def test_scheduled_publish_and_render(env, monkeypatch, tmp_path):
+    pipeline, db = env
+    from datetime import datetime as real_datetime
+    from app import cli, config, youtube_client
+
+    monkeypatch.setattr(pipeline, "settings", config.Settings(data_dir=db.settings.data_dir, schedule_publish=True))
+    seen = {}
+    monkeypatch.setattr(youtube_client, "upload_video", lambda **kw: seen.update(kw) or "ytS")
+    assert pipeline.upload_today() == "ytS"
+    publish_at = seen["publish_at"]
+    now = real_datetime.now(timezone.utc)
+    assert publish_at is None or publish_at > now  # na 15:45 lokale tijd: direct publiceren
+
+    out = cli.render(str(tmp_path / "site"))
+    html = out.read_text()
+    assert "GitHub Actions" in html and "/actions/generate" not in html

@@ -28,6 +28,8 @@ class Settings:
     timezone: str = os.getenv("TIMEZONE", "Europe/Amsterdam")
     generate_time: tuple[int, int] = _hm(os.getenv("GENERATE_TIME", "13:00"))
     upload_time: tuple[int, int] = _hm(os.getenv("UPLOAD_TIME", "16:00"))
+    # Upload vooraf als privé met een publicatietijd; YouTube zet hem precies op UPLOAD_TIME live.
+    schedule_publish: bool = os.getenv("SCHEDULE_PUBLISH", "0") == "1"
     stats_interval_hours: int = int(os.getenv("STATS_INTERVAL_HOURS", "3"))
     evolve_day: str = os.getenv("EVOLVE_DAY", "mon")
     evolve_time: tuple[int, int] = _hm(os.getenv("EVOLVE_TIME", "09:00"))

@@ -6,3 +6,4 @@ data/
 client_secret*.json
 token.json
 .pytest_cache/
+.oauth_pending.json
